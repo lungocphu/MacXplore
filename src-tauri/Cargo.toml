@@ -1,0 +1,44 @@
+[package]
+name = "macxplore"
+version = "0.1.0"
+description = "Windows 11 File Explorer style file manager for macOS"
+authors = ["MacXplore"]
+edition = "2021"
+
+[lib]
+name = "macxplore_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+trash = "5"
+open = "5"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "alloc", "NSArray", "NSGeometry", "NSObject", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "alloc",
+    "objc2-core-foundation",
+    "NSApplication",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSEvent",
+    "NSImage",
+    "NSPasteboard",
+    "NSResponder",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }

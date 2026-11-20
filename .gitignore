@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Frontend build outputs
+dist/
+dist-ssr/
+
+# Rust / Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Environment & local files
+*.local
+.env
+.env.*
+*.log
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local scratch / temporary assets
+image.jpeg
+image.png
+*.dmg
+*.app
