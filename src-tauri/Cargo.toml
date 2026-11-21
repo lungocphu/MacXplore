@@ -1,6 +1,6 @@
 [package]
 name = "macxplore"
-version = "0.1.0"
+version = "0.1.1"
 description = "Windows 11 File Explorer style file manager for macOS"
 authors = ["MacXplore"]
 edition = "2021"

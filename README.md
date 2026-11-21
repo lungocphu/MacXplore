@@ -1,13 +1,26 @@
 <p align="center">
-  <img src="app-icon.png" alt="MXplore Icon" width="96" height="96" />
+  <img src="app-icon.png" alt="MXplore Icon" width="112" height="112" />
 </p>
 
 <h1 align="center">MXplore (File Explorer in MacOS)</h1>
 
 <p align="center">
   <strong>Windows 11 File Explorer UI &amp; productivity meets native macOS Finder power.</strong><br/>
-  Built with Tauri v2, Rust, React 19, TypeScript, Tailwind CSS v4, and Zustand.
+  Built with Tauri v2, Rust, React 19, TypeScript, Tailwind CSS v4, and Zustand.<br/>
+  <sub>Latest Release: <a href="https://github.com/lungocphu/MacXplore/releases/tag/v0.1.1"><strong>v0.1.1</strong></a></sub>
 </p>
+
+---
+
+## What's New in v0.1.1
+
+- **"Show in MXplore" for Completed Downloads:** Live background watcher on `~/Downloads` ignores in-progress browser downloads (`.crdownload`, `.download`, `.part`, `.tmp`) and pops up a non-intrusive banner offering both **Show in MXplore** (opens parent folder, selects & scrolls directly to the file) and **Show in Finder**, while automatically refreshing open `~/Downloads` tabs.
+- **1-Click macOS Integration Dialog (`macOS` button on Command Bar & Menu Bar Tray):**
+  - **macOS Quick Action (`Show in MXplore`):** 1-click install/remove of `~/Library/Services/Show in MXplore.workflow` so right-clicking any file/folder in Finder, Desktop, or Downloads offers **Quick Actions / Services → Show in MXplore**.
+  - **Redirect Browser "Show in Finder" → MXplore (`NSFileViewer`):** 1-click toggle (`defaults write -g NSFileViewer -string com.mxplore.explorer`) so clicking "Show in Finder" on completed downloads in Chrome, Safari, Edge, Brave, Firefox, Slack, or Telegram reveals the exact file in MXplore (reversible anytime; MXplore's own "Show in Finder" still opens Apple Finder safely).
+- **Quick Cabinet Reveal Actions:** Every row in Menu Bar Quick Cabinet now includes a dedicated **Show in MXplore** button alongside **Show in Finder**, plus a live completed-download strip.
+- **`mxplore://` URL Scheme & Document Handler:** Registered `CFBundleDocumentTypes` (`public.folder`, `public.item`) and `mxplore://reveal?path=...` in `src-tauri/Info.plist` with warm-start and cold-start reveal handling.
+- **New macOS App Icon:** Refreshed transparent squircle icon with enlarged framing and soft macOS drop shadow across `.icns`, `.ico`, PNGs, and GitHub repository icon.
 
 ---
 
@@ -29,7 +42,7 @@
 - **Direct `.zip` Archive Browsing:** Double-click or press `Enter` on `.zip` files to browse inside like a normal folder (`/path/archive.zip::inner/path`) without extracting first. Preview files with QuickLook (`Space`), open with default apps, drag files directly out of `.zip` archives, copy/paste out, or click **Extract All...**.
 - **LAN Network Drives (`⌘K`):** Auto-detect mounted `SMB`, `AFP`, `NFS`, `WebDAV` drives, discover LAN servers via macOS Bonjour (`dns-sd`), browse SMB shares (`smbutil view`), paste Windows UNC paths (`\\192.168.1.x\Share`) directly into the Address Bar, and eject cleanly from the Sidebar.
 - **Menu Bar Quick Cabinet:** Floating macOS tray popover with an Unsorted **Inbox**, Pinned folders, Quick Note creation, and drag-and-drop classification.
-- **macOS Native Integrations:** Instant **QuickLook** (`Space`), **Spotlight Search** (`Enter` in search bar), **Reveal in Finder**, **Open in Terminal**, and automatic Cloud Drive detection (`iCloud Drive`, `Google Drive`, `OneDrive`, `Dropbox`, etc.).
+- **macOS Native Integrations:** Instant **QuickLook** (`Space`), **Spotlight Search** (`Enter` in search bar), **Show in MXplore** (live `~/Downloads` watcher, macOS Quick Action Service, `NSFileViewer` browser redirect, and `mxplore://reveal?path=...` URL scheme), **Reveal in Finder**, **Open in Terminal**, and automatic Cloud Drive detection (`iCloud Drive`, `Google Drive`, `OneDrive`, `Dropbox`, etc.).
 
 ---
 
@@ -85,6 +98,7 @@ MacXplore/
 │   │   ├── QuickCabinet.tsx          # macOS Menu Bar floating Inbox & quick-access cabinet
 │   │   ├── Sidebar.tsx               # Quick Access, Pinned Cabinet, Cloud, Network (LAN), This Mac
 │   │   ├── StatusBar.tsx             # Active pane/LAN/ZIP indicators, selection stats, quick view bar
+│   │   ├── SystemIntegrationModal.tsx # 1-click macOS Quick Action, NSFileViewer & Downloads watcher settings
 │   │   ├── TabBar.tsx                # Draggable overlay titlebar & browser-style tabs
 │   │   └── TreeNode.tsx              # Expandable lazy-loaded folder tree item
 │   ├── hooks/
@@ -97,12 +111,14 @@ MacXplore/
 │       └── useExplorerStore.ts       # Central Zustand store (tabs, dual pane, LAN, ZIP, undo/redo)
 └── src-tauri/
     ├── Cargo.toml
+    ├── Info.plist                    # macOS CFBundleDocumentTypes & mxplore:// URL scheme
     ├── tauri.conf.json
     ├── capabilities/default.json
     └── src/
         ├── main.rs
-        ├── lib.rs                    # App setup, tray icon, Quick Cabinet window, command registry
+        ├── lib.rs                    # App setup, tray icon, Quick Cabinet, RunEvent::Opened, commands
         ├── fs_commands.rs            # Filesystem, LAN mounts, SMB/Bonjour, ZIP browsing, thumbnails
+        ├── macos_integration.rs      # NSFileViewer, Quick Action Service, Downloads watcher & reveal
         └── native_drag.rs            # Native macOS AppKit NSDraggingSession & live cursor bridge
 ```
 
@@ -133,7 +149,7 @@ npm run tauri build
 ```
 Built bundles are output to:
 - `src-tauri/target/release/bundle/macos/MXplore.app`
-- `src-tauri/target/release/bundle/dmg/MXplore_0.1.0_aarch64.dmg`
+- `src-tauri/target/release/bundle/dmg/MXplore_0.1.1_aarch64.dmg`
 
 ---
 
