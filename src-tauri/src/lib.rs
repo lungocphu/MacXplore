@@ -1,7 +1,9 @@
 mod fs_commands;
+mod macos_integration;
 mod native_drag;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -12,6 +14,8 @@ use tauri::{
 };
 
 struct CabinetPinState(AtomicBool);
+struct FrontendReadyState(AtomicBool);
+struct PendingRevealState(Mutex<Option<macos_integration::RevealTarget>>);
 
 #[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -98,6 +102,59 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+fn dispatch_reveal_to_main(
+    app: &AppHandle,
+    raw_path: &str,
+    prefer_select_dir: bool,
+) -> Result<macos_integration::RevealTarget, String> {
+    let target = macos_integration::resolve_reveal_target(raw_path, prefer_select_dir)?;
+    show_main_window(app);
+
+    let ready = app
+        .state::<FrontendReadyState>()
+        .0
+        .load(Ordering::Relaxed);
+
+    if ready {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.emit("mxplore:reveal", &target);
+        }
+    } else if let Ok(mut pending) = app.state::<PendingRevealState>().0.lock() {
+        *pending = Some(target.clone());
+    }
+
+    Ok(target)
+}
+
+#[tauri::command]
+fn take_pending_reveal_path(
+    ready_state: State<FrontendReadyState>,
+    pending_state: State<PendingRevealState>,
+) -> Option<macos_integration::RevealTarget> {
+    ready_state.0.store(true, Ordering::Relaxed);
+    pending_state
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+#[tauri::command]
+fn reveal_path_in_main(
+    app: AppHandle,
+    path: String,
+    prefer_select_dir: Option<bool>,
+) -> Result<macos_integration::RevealTarget, String> {
+    let target = dispatch_reveal_to_main(&app, &path, prefer_select_dir.unwrap_or(true))?;
+    if let Some(cabinet) = app.get_webview_window("cabinet") {
+        let pin_state = app.state::<CabinetPinState>();
+        if !pin_state.0.load(Ordering::Relaxed) {
+            let _ = cabinet.hide();
+        }
+    }
+    Ok(target)
+}
+
 #[tauri::command]
 fn set_cabinet_pinned(pinned: bool, state: State<CabinetPinState>) {
     state.0.store(pinned, Ordering::Relaxed);
@@ -165,7 +222,34 @@ pub fn run() {
     let app = tauri::Builder::default()
         // Keep Quick Cabinet pinned by default so users can freely click/drag files from Desktop into it.
         .manage(CabinetPinState(AtomicBool::new(true)))
+        .manage(FrontendReadyState(AtomicBool::new(false)))
+        .manage(PendingRevealState(Mutex::new(None)))
         .setup(|app| {
+            // Check if launched with a file/folder path or mxplore:// URL argument
+            for arg in std::env::args().skip(1) {
+                if arg.starts_with('-') {
+                    continue;
+                }
+                let parsed = if let Ok(url) = tauri::Url::parse(&arg) {
+                    macos_integration::parse_incoming_url(&url)
+                } else {
+                    Some((arg, false))
+                };
+                if let Some((raw_path, prefer_select_dir)) = parsed {
+                    if let Ok(target) =
+                        macos_integration::resolve_reveal_target(&raw_path, prefer_select_dir)
+                    {
+                        if let Ok(mut pending) = app.state::<PendingRevealState>().0.lock() {
+                            *pending = Some(target);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Start lightweight ~/Downloads completion watcher ("Show in MXplore" + "Show in Finder")
+            macos_integration::start_downloads_watcher(app.handle().clone());
+
             // Create hidden floating Quick Cabinet popover window anchored to macOS Menu Bar
             let cabinet = WebviewWindowBuilder::new(
                 app,
@@ -249,6 +333,13 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let integration_item = MenuItem::with_id(
+                app,
+                "open_integration",
+                "Show in MXplore (macOS Integration)...",
+                true,
+                None::<&str>,
+            )?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_item =
                 MenuItem::with_id(app, "quit", "Quit MXplore", true, None::<&str>)?;
@@ -259,6 +350,7 @@ pub fn run() {
                     &toggle_item,
                     &open_main_item,
                     &open_inbox_item,
+                    &integration_item,
                     &sep,
                     &quit_item,
                 ],
@@ -285,6 +377,12 @@ pub fn run() {
                             if let Some(main) = app.get_webview_window("main") {
                                 let _ = main.emit("mxplore:navigate", inbox);
                             }
+                        }
+                    }
+                    "open_integration" => {
+                        show_main_window(app);
+                        if let Some(main) = app.get_webview_window("main") {
+                            let _ = main.emit("mxplore:open-integration-modal", ());
                         }
                     }
                     "quit" => {
@@ -342,18 +440,41 @@ pub fn run() {
             set_cabinet_pinned,
             hide_cabinet,
             open_path_in_main,
+            reveal_path_in_main,
+            take_pending_reveal_path,
             notify_cabinet_sync,
             is_option_key_down,
             get_drag_pointer_state,
             start_native_drag,
+            macos_integration::get_macos_integration_status,
+            macos_integration::set_default_file_viewer,
+            macos_integration::install_show_in_mxplore_service,
+            macos_integration::uninstall_show_in_mxplore_service,
+            macos_integration::resolve_reveal_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
         #[cfg(target_os = "macos")]
-        if let RunEvent::Reopen { .. } = event {
-            show_main_window(app_handle);
+        match event {
+            RunEvent::Reopen { .. } => {
+                show_main_window(app_handle);
+            }
+            RunEvent::Opened { urls } => {
+                for url in urls {
+                    if let Some((raw_path, prefer_select_dir)) =
+                        macos_integration::parse_incoming_url(&url)
+                    {
+                        if dispatch_reveal_to_main(app_handle, &raw_path, prefer_select_dir)
+                            .is_ok()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
         #[cfg(not(target_os = "macos"))]
         let _ = (app_handle, event);

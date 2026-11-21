@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { AlertCircle, CheckCircle2, Undo2, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  FolderOpen,
+  Search,
+  Undo2,
+  X,
+} from "lucide-react";
 import { TabBar } from "./components/TabBar";
 import { NavigationBar } from "./components/NavigationBar";
 import { CommandBar } from "./components/CommandBar";
@@ -11,9 +19,19 @@ import { StatusBar } from "./components/StatusBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { DestinationModal } from "./components/DestinationModal";
 import { NetworkDriveModal } from "./components/NetworkDriveModal";
+import { SystemIntegrationModal } from "./components/SystemIntegrationModal";
 import { useExplorerShortcuts } from "./hooks/useExplorerShortcuts";
-import { getParentPath, isZipVirtualPath, normalizePath } from "./lib/format";
-import { tauriApi } from "./lib/tauriApi";
+import {
+  formatFileSize,
+  getParentPath,
+  isZipVirtualPath,
+  normalizePath,
+} from "./lib/format";
+import {
+  tauriApi,
+  type DownloadCompletedEvent,
+  type RevealTarget,
+} from "./lib/tauriApi";
 import {
   getPaneSnapshot,
   useExplorerStore,
@@ -106,6 +124,14 @@ function isSelfOrDescendantDrop(
 export function App() {
   const initExplorer = useExplorerStore((s) => s.initExplorer);
   const navigateTo = useExplorerStore((s) => s.navigateTo);
+  const revealTargetInPane = useExplorerStore((s) => s.revealTargetInPane);
+  const revealPath = useExplorerStore((s) => s.revealPath);
+  const revealInFinder = useExplorerStore((s) => s.revealInFinder);
+  const openIntegrationModal = useExplorerStore((s) => s.openIntegrationModal);
+  const recentDownloadNotice = useExplorerStore((s) => s.recentDownloadNotice);
+  const setRecentDownloadNotice = useExplorerStore(
+    (s) => s.setRecentDownloadNotice
+  );
   const toast = useExplorerStore((s) => s.toast);
   const clearToast = useExplorerStore((s) => s.clearToast);
   const undoLastAction = useExplorerStore((s) => s.undoLastAction);
@@ -126,6 +152,7 @@ export function App() {
   const dragEventSeqRef = useRef<number>(0);
   const springTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const springTargetRef = useRef<string | null>(null);
+  const downloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
   const [dragOverPane, setDragOverPane] = useState<PaneId | null>(null);
@@ -133,23 +160,83 @@ export function App() {
   useExplorerShortcuts();
 
   useEffect(() => {
-    void initExplorer();
+    void (async () => {
+      await initExplorer();
+      try {
+        const pending = await tauriApi.takePendingRevealPath();
+        if (pending) {
+          await useExplorerStore.getState().revealTargetInPane(pending);
+        }
+      } catch {
+        // Ignore if running outside Tauri
+      }
+    })();
   }, [initExplorer]);
 
-  // Listen to navigation requests triggered from the Menu Bar Quick Cabinet
+  // Listen to navigation, "Show in MXplore" reveal, integration modal, and completed download events
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
+    let unlistenNav: (() => void) | null = null;
+    let unlistenReveal: (() => void) | null = null;
+    let unlistenModal: (() => void) | null = null;
+    let unlistenDownload: (() => void) | null = null;
+
     void listen<string>("mxplore:navigate", (event) => {
       if (typeof event.payload === "string" && event.payload.trim()) {
         navigateTo(event.payload);
       }
     }).then((fn) => {
-      unlisten = fn;
+      unlistenNav = fn;
     });
+
+    void listen<RevealTarget>("mxplore:reveal", (event) => {
+      if (event.payload && event.payload.directory) {
+        void revealTargetInPane(event.payload);
+      }
+    }).then((fn) => {
+      unlistenReveal = fn;
+    });
+
+    void listen("mxplore:open-integration-modal", () => {
+      openIntegrationModal();
+    }).then((fn) => {
+      unlistenModal = fn;
+    });
+
+    void listen<DownloadCompletedEvent>(
+      "mxplore:download-completed",
+      (event) => {
+        const payload = event.payload;
+        if (!payload?.path) return;
+
+        const state = useExplorerStore.getState();
+        void state.refreshPathIfOpen(payload.directory);
+
+        if (state.downloadNotificationsEnabled) {
+          state.setRecentDownloadNotice(payload);
+          if (downloadTimerRef.current) {
+            clearTimeout(downloadTimerRef.current);
+          }
+          downloadTimerRef.current = setTimeout(() => {
+            useExplorerStore.getState().setRecentDownloadNotice(null);
+            downloadTimerRef.current = null;
+          }, 14000);
+        }
+      }
+    ).then((fn) => {
+      unlistenDownload = fn;
+    });
+
     return () => {
-      unlisten?.();
+      unlistenNav?.();
+      unlistenReveal?.();
+      unlistenModal?.();
+      unlistenDownload?.();
+      if (downloadTimerRef.current) {
+        clearTimeout(downloadTimerRef.current);
+        downloadTimerRef.current = null;
+      }
     };
-  }, [navigateTo]);
+  }, [navigateTo, revealTargetInPane, openIntegrationModal]);
 
   // Refresh source folders when a native drag-out to Finder/Desktop/another app finishes
   useEffect(() => {
@@ -515,6 +602,73 @@ export function App() {
       <ContextMenu />
       <DestinationModal />
       <NetworkDriveModal />
+      <SystemIntegrationModal />
+
+      {recentDownloadNotice && (
+        <div
+          role="status"
+          className={`fixed right-3 z-50 flex w-[340px] max-w-[calc(100vw-24px)] flex-col gap-2 rounded-[10px] border border-black/[0.12] bg-white/95 p-3 text-[12px] shadow-[0_14px_40px_rgba(0,0,0,0.18)] backdrop-blur-xl dark:border-white/[0.14] dark:bg-[#2a2a2a]/95 dark:shadow-[0_16px_44px_rgba(0,0,0,0.48)] ${
+            toast ? "bottom-[82px]" : "bottom-9"
+          }`}
+        >
+          <div className="flex items-start gap-2.5">
+            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-emerald-500/14 text-emerald-600 dark:bg-emerald-400/16 dark:text-emerald-400">
+              <Download size={14} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[11px] font-semibold tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
+                Download complete
+              </div>
+              <div
+                className="truncate text-[12.5px] font-medium text-[#1a1a1a] dark:text-[#f3f3f3]"
+                title={recentDownloadNotice.name}
+              >
+                {recentDownloadNotice.name}
+              </div>
+              {!recentDownloadNotice.is_dir && (
+                <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  {formatFileSize(recentDownloadNotice.size)} • Downloads
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setRecentDownloadNotice(null)}
+              aria-label="Dismiss download notification"
+              className="rounded p-0.5 text-neutral-400 hover:bg-black/[0.06] hover:text-neutral-700 dark:hover:bg-white/[0.08] dark:hover:text-neutral-200"
+            >
+              <X size={13} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                const targetPath = recentDownloadNotice.path;
+                setRecentDownloadNotice(null);
+                void revealPath(targetPath, true);
+              }}
+              className="flex h-[28px] flex-1 items-center justify-center gap-1.5 rounded-[6px] bg-[#0067c0] px-2.5 text-[11.5px] font-medium text-white transition-colors hover:bg-[#005aa8] dark:bg-[#60cdff] dark:text-[#121212] dark:hover:bg-[#7ad5ff]"
+            >
+              <FolderOpen size={13} />
+              <span>Show in MXplore</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const targetPath = recentDownloadNotice.path;
+                setRecentDownloadNotice(null);
+                void revealInFinder(targetPath);
+              }}
+              className="flex h-[28px] items-center justify-center gap-1.5 rounded-[6px] border border-black/[0.12] bg-white px-2.5 text-[11.5px] font-medium text-[#1f1f1f] transition-colors hover:bg-black/[0.05] dark:border-white/[0.14] dark:bg-[#353535] dark:text-[#ececec] dark:hover:bg-white/[0.1]"
+            >
+              <Search size={12} />
+              <span>Show in Finder</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div

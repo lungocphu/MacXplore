@@ -3,8 +3,11 @@ import { useShallow } from "zustand/react/shallow";
 import {
   tauriApi,
   type ConnectNetworkResult,
+  type DownloadCompletedEvent,
   type FileEntry,
+  type MacOsIntegrationStatus,
   type NetworkDrive,
+  type RevealTarget,
   type SpecialPaths,
 } from "../lib/tauriApi";
 import {
@@ -121,6 +124,7 @@ const RECENT_LAN_SERVERS_STORAGE_KEY = "macxplore.recentLanAddresses";
 const VIEW_MODE_STORAGE_KEY = "macxplore.viewMode";
 const SHOW_CHECKBOXES_STORAGE_KEY = "macxplore.showCheckboxes";
 const DUAL_PANE_SPLIT_STORAGE_KEY = "macxplore.dualPaneSplitRatio";
+const DOWNLOAD_NOTIFICATIONS_STORAGE_KEY = "macxplore.downloadNotifications";
 const MAX_RECENT_DESTINATIONS = 5;
 const MAX_RECENT_LAN_ADDRESSES = 8;
 const MAX_UNDO_HISTORY = 50;
@@ -271,6 +275,26 @@ function saveSplitRatio(ratio: number) {
   }
 }
 
+function loadDownloadNotificationsEnabled(): boolean {
+  try {
+    const raw = window.localStorage.getItem(DOWNLOAD_NOTIFICATIONS_STORAGE_KEY);
+    return raw === null ? true : raw !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function saveDownloadNotificationsEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(
+      DOWNLOAD_NOTIFICATIONS_STORAGE_KEY,
+      enabled ? "true" : "false"
+    );
+  } catch {
+    // Ignore storage write failures
+  }
+}
+
 function createEmptyPaneState(initialPath = ""): PaneState {
   const normalized = initialPath ? normalizePath(initialPath) : "";
   return {
@@ -338,6 +362,12 @@ export interface ExplorerStore {
   draggingPaths: string[];
   dropTargetFolder: string | null;
   dropCopyMode: boolean;
+
+  // macOS "Show in MXplore" Integration & Downloads Watcher state
+  integrationModalOpen: boolean;
+  macosIntegrationStatus: MacOsIntegrationStatus | null;
+  downloadNotificationsEnabled: boolean;
+  recentDownloadNotice: DownloadCompletedEvent | null;
 
   // Phase 4: macOS Spotlight search state (primary / left pane)
   spotlightActive: boolean;
@@ -441,6 +471,20 @@ export interface ExplorerStore {
   openInTerminal: (path?: string) => Promise<void>;
   runSpotlightSearch: (query?: string, paneId?: PaneId) => Promise<void>;
   clearSpotlightSearch: (paneId?: PaneId) => void;
+
+  // macOS "Show in MXplore" Integration & Reveal actions
+  openIntegrationModal: () => void;
+  closeIntegrationModal: () => void;
+  refreshMacosIntegrationStatus: () => Promise<MacOsIntegrationStatus | null>;
+  setMacosIntegrationStatus: (status: MacOsIntegrationStatus) => void;
+  setDownloadNotificationsEnabled: (enabled: boolean) => void;
+  setRecentDownloadNotice: (notice: DownloadCompletedEvent | null) => void;
+  revealTargetInPane: (target: RevealTarget, paneId?: PaneId) => Promise<void>;
+  revealPath: (
+    rawPath: string,
+    preferSelectDir?: boolean,
+    paneId?: PaneId
+  ) => Promise<void>;
 
   // Undo / Redo actions
   pushUndoRecord: (record: UndoRecord) => void;
@@ -603,6 +647,11 @@ export const useExplorerStore = create<ExplorerStore>((set, get) => ({
   dropTargetFolder: null,
   dropCopyMode: false,
 
+  integrationModalOpen: false,
+  macosIntegrationStatus: null,
+  downloadNotificationsEnabled: loadDownloadNotificationsEnabled(),
+  recentDownloadNotice: null,
+
   spotlightActive: false,
   spotlightQuery: "",
   spotlightScopeDir: "",
@@ -629,6 +678,7 @@ export const useExplorerStore = create<ExplorerStore>((set, get) => ({
         activePane: "left",
       });
       await get().loadDirectory(startPath, firstTab.id, "left");
+      void get().refreshMacosIntegrationStatus();
     } catch (err) {
       set({ error: String(err), isLoading: false });
     }
@@ -2843,5 +2893,89 @@ export const useExplorerStore = create<ExplorerStore>((set, get) => ({
         sortDirection: "asc",
       };
     });
+  },
+
+  openIntegrationModal: () => {
+    set({ integrationModalOpen: true, contextMenu: null });
+    void get().refreshMacosIntegrationStatus();
+  },
+
+  closeIntegrationModal: () => {
+    set({ integrationModalOpen: false });
+  },
+
+  refreshMacosIntegrationStatus: async () => {
+    try {
+      const status = await tauriApi.getMacosIntegrationStatus();
+      set({ macosIntegrationStatus: status });
+      return status;
+    } catch {
+      return null;
+    }
+  },
+
+  setMacosIntegrationStatus: (status: MacOsIntegrationStatus) => {
+    set({ macosIntegrationStatus: status });
+  },
+
+  setDownloadNotificationsEnabled: (enabled: boolean) => {
+    saveDownloadNotificationsEnabled(enabled);
+    set((state) => ({
+      downloadNotificationsEnabled: enabled,
+      recentDownloadNotice: enabled ? state.recentDownloadNotice : null,
+    }));
+  },
+
+  setRecentDownloadNotice: (notice: DownloadCompletedEvent | null) => {
+    set({ recentDownloadNotice: notice });
+  },
+
+  revealTargetInPane: async (target: RevealTarget, paneId?: PaneId) => {
+    const state = get();
+    const targetPane: PaneId =
+      paneId ?? (state.dualPane ? state.activePane : "left");
+    const home = state.specialPaths?.home;
+    const normalizedDir = normalizePath(target.directory, home);
+
+    state.navigateTo(normalizedDir, targetPane);
+
+    const afterNav = get();
+    const tabId =
+      targetPane === "left" ? selectActiveTab(afterNav).id : undefined;
+
+    await afterNav.loadDirectory(normalizedDir, tabId, targetPane);
+
+    if (!target.select_path) {
+      return;
+    }
+
+    const selectPath = normalizePath(target.select_path, home);
+    let snap = getPaneSnapshot(get(), targetPane);
+    let found = snap.entries.some((e) => e.path === selectPath);
+
+    // If the revealed item is a hidden file/folder, automatically show hidden items so it can be highlighted
+    if (!found && target.name.startsWith(".") && !get().showHidden) {
+      set({ showHidden: true });
+      await get().loadDirectory(normalizedDir, tabId, targetPane);
+      snap = getPaneSnapshot(get(), targetPane);
+      found = snap.entries.some((e) => e.path === selectPath);
+    }
+
+    if (found) {
+      get().setSelectedPaths([selectPath], selectPath, targetPane);
+    }
+  },
+
+  revealPath: async (
+    rawPath: string,
+    preferSelectDir = true,
+    paneId?: PaneId
+  ) => {
+    try {
+      const target = await tauriApi.resolveRevealPath(rawPath, preferSelectDir);
+      await get().revealTargetInPane(target, paneId);
+    } catch (err) {
+      get().showToast(`Could not reveal item: ${String(err)}`, "error");
+    }
   },
 }));

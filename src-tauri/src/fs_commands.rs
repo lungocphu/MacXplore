@@ -1028,8 +1028,60 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
         return Err(format!("Item does not exist: {}", target.display()));
     }
 
+    let target_str = path_to_string(&target);
+
+    // If MXplore is configured as macOS's global NSFileViewer, `open -R` would loop back into MXplore.
+    // Explicitly ask Apple Finder to reveal the item instead.
+    if crate::macos_integration::is_mxplore_default_file_viewer() {
+        let osa_status = Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "tell application \"Finder\"",
+                "-e",
+                "reveal (POSIX file (item 1 of argv))",
+                "-e",
+                "activate",
+                "-e",
+                "end tell",
+                "-e",
+                "end run",
+                &target_str,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if matches!(osa_status, Ok(s) if s.success()) {
+            return Ok(());
+        }
+
+        // Fallback if Finder Automation permission is not granted: open parent folder directly in Apple Finder
+        let folder_to_open = if target.is_dir() {
+            target.clone()
+        } else {
+            target
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| target.clone())
+        };
+        let fallback_status = Command::new("open")
+            .args(["-b", "com.apple.finder", &path_to_string(&folder_to_open)])
+            .status()
+            .map_err(|e| format!("Failed to open Finder for '{}': {}", target.display(), e))?;
+
+        if !fallback_status.success() {
+            return Err(format!(
+                "Apple Finder returned non-zero exit status while opening '{}'",
+                target.display()
+            ));
+        }
+        return Ok(());
+    }
+
     let status = Command::new("open")
-        .args(["-R", &path_to_string(&target)])
+        .args(["-R", &target_str])
         .status()
         .map_err(|e| format!("Failed to reveal '{}' in Finder: {}", target.display(), e))?;
 

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ClipboardPaste,
   Columns2,
+  Compass,
   Copy,
   Eye,
   EyeOff,
@@ -98,6 +99,10 @@ export function CommandBar() {
   const toggleShowCheckboxes = useExplorerStore((s) => s.toggleShowCheckboxes);
   const toggleDualPane = useExplorerStore((s) => s.toggleDualPane);
   const openNetworkModal = useExplorerStore((s) => s.openNetworkModal);
+  const openIntegrationModal = useExplorerStore((s) => s.openIntegrationModal);
+  const macosIntegrationStatus = useExplorerStore(
+    (s) => s.macosIntegrationStatus
+  );
 
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -508,6 +513,29 @@ export function CommandBar() {
             <EyeOff size={15} strokeWidth={1.8} />
           )}
           <span className="hidden sm:inline">Hidden</span>
+        </button>
+
+        <div className="mx-0.5 h-5 w-[1px] bg-black/[0.1] dark:bg-white/[0.1]" />
+
+        <button
+          type="button"
+          onClick={openIntegrationModal}
+          title="Show in MXplore — macOS Integration (Downloads, Quick Action & Default File Viewer)"
+          className="relative flex h-[32px] items-center gap-1.5 rounded-[5px] px-2 text-[12.5px] text-[#1f1f1f] transition-colors hover:bg-black/[0.06] active:bg-black/[0.1] dark:text-[#ececec] dark:hover:bg-white/[0.08] dark:active:bg-white/[0.12]"
+        >
+          <Compass
+            size={15}
+            strokeWidth={1.8}
+            className="text-[#0067c0] dark:text-[#60cdff]"
+          />
+          <span className="hidden xl:inline">macOS</span>
+          {(macosIntegrationStatus?.is_default_file_viewer ||
+            macosIntegrationStatus?.quick_action_installed) && (
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+              aria-hidden="true"
+            />
+          )}
         </button>
       </div>
     </div>

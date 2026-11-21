@@ -400,6 +400,29 @@ export interface DragPointerState {
   option_down: boolean;
 }
 
+export interface MacOsIntegrationStatus {
+  is_default_file_viewer: boolean;
+  quick_action_installed: boolean;
+  quick_action_path: string;
+  bundle_id: string;
+}
+
+export interface RevealTarget {
+  directory: string;
+  select_path: string | null;
+  name: string;
+  is_dir: boolean;
+}
+
+export interface DownloadCompletedEvent {
+  name: string;
+  path: string;
+  directory: string;
+  size: number;
+  is_dir: boolean;
+  completed_at: number;
+}
+
 /**
  * Returns true if the macOS Option (Alt) modifier key is currently held down.
  */
@@ -422,6 +445,69 @@ export async function getDragPointerState(): Promise<DragPointerState | null> {
  */
 export async function startNativeDrag(paths: string[]): Promise<void> {
   return invoke<void>("start_native_drag", { paths });
+}
+
+/**
+ * Brings the main MXplore window to the front, navigates to the item's folder, and highlights it.
+ */
+export async function revealPathInMain(
+  path: string,
+  preferSelectDir = true
+): Promise<RevealTarget> {
+  return invoke<RevealTarget>("reveal_path_in_main", {
+    path,
+    preferSelectDir,
+  });
+}
+
+/**
+ * Marks the main frontend ready and retrieves any pending reveal target from cold-start launch.
+ */
+export async function takePendingRevealPath(): Promise<RevealTarget | null> {
+  return invoke<RevealTarget | null>("take_pending_reveal_path");
+}
+
+/**
+ * Resolves a filesystem path into its containing directory and optional item path to highlight.
+ */
+export async function resolveRevealPath(
+  path: string,
+  preferSelectDir = true
+): Promise<RevealTarget> {
+  return invoke<RevealTarget>("resolve_reveal_path", {
+    path,
+    preferSelectDir,
+  });
+}
+
+/**
+ * Returns the current status of macOS "Show in MXplore" integrations (NSFileViewer & Quick Action).
+ */
+export async function getMacosIntegrationStatus(): Promise<MacOsIntegrationStatus> {
+  return invoke<MacOsIntegrationStatus>("get_macos_integration_status");
+}
+
+/**
+ * Enables or disables macOS global NSFileViewer redirection ("Show in Finder" -> MXplore).
+ */
+export async function setDefaultFileViewer(
+  enabled: boolean
+): Promise<MacOsIntegrationStatus> {
+  return invoke<MacOsIntegrationStatus>("set_default_file_viewer", { enabled });
+}
+
+/**
+ * Installs the macOS Quick Action / Service ("Show in MXplore") into ~/Library/Services.
+ */
+export async function installShowInMxploreService(): Promise<MacOsIntegrationStatus> {
+  return invoke<MacOsIntegrationStatus>("install_show_in_mxplore_service");
+}
+
+/**
+ * Removes the macOS Quick Action / Service ("Show in MXplore") from ~/Library/Services.
+ */
+export async function uninstallShowInMxploreService(): Promise<MacOsIntegrationStatus> {
+  return invoke<MacOsIntegrationStatus>("uninstall_show_in_mxplore_service");
 }
 
 export const tauriApi = {
@@ -456,8 +542,15 @@ export const tauriApi = {
   setCabinetPinned,
   hideCabinet,
   openPathInMain,
+  revealPathInMain,
+  takePendingRevealPath,
+  resolveRevealPath,
   notifyCabinetSync,
   isOptionKeyDown,
   getDragPointerState,
   startNativeDrag,
+  getMacosIntegrationStatus,
+  setDefaultFileViewer,
+  installShowInMxploreService,
+  uninstallShowInMxploreService,
 };

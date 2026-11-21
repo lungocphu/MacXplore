@@ -10,6 +10,7 @@ import {
   Eye,
   FileText,
   Folder,
+  FolderOpen,
   FolderOutput,
   FolderPlus,
   Home,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 import {
   tauriApi,
+  type DownloadCompletedEvent,
   type FileEntry,
   type SpecialPaths,
 } from "../lib/tauriApi";
@@ -101,6 +103,8 @@ export function QuickCabinet() {
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
   const [dragTargetFolder, setDragTargetFolder] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [recentDownload, setRecentDownload] =
+    useState<DownloadCompletedEvent | null>(null);
 
   // Inline Quick Note / Pin Path / Inbox Settings / 1-click Classify states
   const [showQuickNote, setShowQuickNote] = useState<boolean>(false);
@@ -200,6 +204,7 @@ export function QuickCabinet() {
     let unlistenSync: (() => void) | null = null;
     let unlistenDrag: (() => void) | null = null;
     let unlistenDragEnded: (() => void) | null = null;
+    let unlistenDownload: (() => void) | null = null;
 
     const setup = async () => {
       unlistenShown = await listen("mxplore:cabinet-shown", () => {
@@ -238,6 +243,18 @@ export function QuickCabinet() {
           void refreshInboxBadge(inboxPathRef.current);
         }
       });
+
+      unlistenDownload = await listen<DownloadCompletedEvent>(
+        "mxplore:download-completed",
+        (event) => {
+          const payload = event.payload;
+          if (!payload?.path) return;
+          setRecentDownload(payload);
+          if (currentPathRef.current === payload.directory) {
+            void loadFolder(payload.directory, false);
+          }
+        }
+      );
 
       unlistenDrag = await getCurrentWebview().onDragDropEvent(async (event) => {
         const payload = event.payload;
@@ -310,6 +327,7 @@ export function QuickCabinet() {
       unlistenSync?.();
       unlistenDrag?.();
       unlistenDragEnded?.();
+      unlistenDownload?.();
     };
   }, [flashNotice, loadFolder, refreshInboxBadge]);
 
@@ -1056,6 +1074,52 @@ export function QuickCabinet() {
             </div>
           )}
 
+          {/* Compact Download Completed Strip */}
+          {recentDownload && (
+            <div className="flex shrink-0 items-center gap-2 border-b border-emerald-500/20 bg-emerald-50/90 px-2.5 py-1.5 text-[11px] dark:border-emerald-400/20 dark:bg-emerald-950/40">
+              <Download
+                size={13}
+                className="shrink-0 text-emerald-600 dark:text-emerald-400"
+              />
+              <span
+                className="min-w-0 flex-1 truncate font-medium text-[#1a1a1a] dark:text-[#ececec]"
+                title={recentDownload.name}
+              >
+                {recentDownload.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const p = recentDownload.path;
+                  setRecentDownload(null);
+                  void tauriApi.revealPathInMain(p, true);
+                }}
+                className="shrink-0 rounded-[4px] bg-[#0067c0] px-1.5 py-0.5 text-[10.5px] font-medium text-white hover:bg-[#005aa8] dark:bg-[#60cdff] dark:text-[#121212]"
+              >
+                Show in MXplore
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const p = recentDownload.path;
+                  setRecentDownload(null);
+                  void tauriApi.revealInFinder(p);
+                }}
+                className="shrink-0 rounded-[4px] border border-black/[0.12] bg-white px-1.5 py-0.5 text-[10.5px] font-medium text-[#1f1f1f] hover:bg-black/[0.05] dark:border-white/[0.14] dark:bg-[#2f2f2f] dark:text-[#ececec]"
+              >
+                Finder
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecentDownload(null)}
+                aria-label="Dismiss download banner"
+                className="rounded p-0.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )}
+
           {/* File List Body */}
           <div className="relative min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
             {isLoading && entries.length === 0 ? (
@@ -1194,9 +1258,20 @@ export function QuickCabinet() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              void tauriApi.revealPathInMain(entry.path, true);
+                            }}
+                            title="Show in MXplore"
+                            className="flex h-6 w-6 items-center justify-center rounded-[4px] text-[#0067c0] hover:bg-[#0067c0]/12 dark:text-[#60cdff] dark:hover:bg-[#60cdff]/16"
+                          >
+                            <FolderOpen size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               void tauriApi.revealInFinder(entry.path);
                             }}
-                            title="Reveal in Finder"
+                            title="Show in Finder"
                             className="flex h-6 w-6 items-center justify-center rounded-[4px] text-neutral-500 hover:bg-black/[0.08] hover:text-[#1a1a1a] dark:text-neutral-400 dark:hover:bg-white/[0.12] dark:hover:text-white"
                           >
                             <Search size={12} />
