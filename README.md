@@ -2,7 +2,7 @@
   <img src="app-icon.png" alt="MXplore Icon" width="96" height="96" />
 </p>
 
-<h1 align="center">MXplore (MacXplore)</h1>
+<h1 align="center">MXplore (File Explorer in MacOS)</h1>
 
 <p align="center">
   <strong>Windows 11 File Explorer UI &amp; productivity meets native macOS Finder power.</strong><br/>
